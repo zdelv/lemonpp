@@ -3,29 +3,34 @@
 #define LEMON_H
 
 #include <vector>
+#include <algorithm>
 #include <iostream>
 #include <ctime>
 #include <chrono>
 #include <thread> 
 #include <memory>
 #include <queue>
-#include <string>
+#include <sstream>
 #include <condition_variable>
 #include <mutex>
 #include <cstdlib>
+
+using namespace std::chrono_literals;
+//TODO: Make all threads into pointers to stop shells from forming after moves
 
 // Main event type
 // Contains the FG, BG colors and the message output by the item
 // Used for emitting into the eventFifo
 // Made of strings for the time being
 // Its easier to push them to lemonbar if its a string 
-// TODO: Make sender automatically pull either id or something else
+// TODO: Make this into a simplier data structure
+//       Strings are kinda inefficient.
 struct event
 {
-    std::string fgColor, bgColor, sender, message;
+    std::string fgColor, bgColor, placement, senderId, message;
 
-    event(std::string _fgColor, std::string _bgColor, std::string _sender, std::string _message)
-        : fgColor(_fgColor), bgColor(_bgColor), sender(_sender), message(_message) {}
+    event(std::string _fgColor, std::string _bgColor, std::string _placement, std::string _senderId, std::string _message)
+        : fgColor(_fgColor), bgColor(_bgColor), placement(_placement), senderId(_senderId), message(_message) {}
 };
 
 // Condition Variable and mutex used between the items and the eventWatchLoop
@@ -38,13 +43,25 @@ int highestId = 0;
 
 static std::queue<event> eventFifo;
 
-using namespace std::chrono_literals;
 enum class location : char
 {
-    left,
-    right,
-    center
+    left='l',
+    right='r',
+    center='c'
 };
+
+std::string locToString(location input)
+{
+    std::string outputLoc; 
+    switch(input)
+    {
+        case(location::left):   outputLoc = "l"; break;
+        case(location::right):  outputLoc = "r"; break;
+        case(location::center): outputLoc = "c"; break;
+        default: std::cout << "Invalid location used!" << std::endl; break;
+    }
+    return outputLoc;
+}
 
 // Global Function for executing bash scripts/programs and
 // piping output into an std::string for processing
@@ -86,11 +103,11 @@ class Item
             highestId += 1;
         };
 
+        // Move constructor
+        // This should just move the placaement and id correctly, then move the thread.
+        // TODO: Probably kill the old item. It is just a shell, since the thread was moved
         Item(Item&& that) noexcept
-            : placement(that.placement), id(that.id), eventThread(std::move(that.eventThread))
-        {
-        
-        };
+            : placement(that.placement), id(that.id), eventThread(std::move(that.eventThread)) {};
 
         Item& operator=(Item&&) = default;
 
@@ -99,11 +116,15 @@ class Item
         /* { */
         /*     highestId += 1; */
         /* } */
+
         ~Item() { eventThread.join(); };
 
         int getId() { return id; };
+
         operator std::string() { return std::to_string(id); };
+
         void kill() { itemAlive = false; };
+        location getPlacement();
 };
 
 // Generic Time item, might include some date ordering later
@@ -112,6 +133,8 @@ class Time: public Item
     private:
         std::time_t timeNow;
         std::tm* dateNow;
+        char msg[100] ;
+
         void displayTime();
         void updateTime();
 
@@ -152,17 +175,22 @@ class Power: public Item
         ~Power();
 };
 
-void Item::itemPushEvent(event input)
-{
-    eventFifo.push(input);   
-}
-
 Time::Time(location _placement)
     : Item(_placement)
 {
     timeNow = std::time(0);
     dateNow = std::localtime(&timeNow);
     eventThread = std::thread(&Time::timeEventLoop, this);
+}
+
+void Item::itemPushEvent(event input)
+{
+    eventFifo.push(input);   
+}
+
+location Item::getPlacement()
+{
+    return this->placement;     
 }
 
 // TODO: Switch to std::strftime() for custom output
@@ -174,6 +202,7 @@ void Time::displayTime()
 void Time::updateTime()
 {
     timeNow = std::time(0); 
+    dateNow = std::localtime(&timeNow);
 }
 
 // Main loop for the Time thread
@@ -182,17 +211,16 @@ void Time::timeEventLoop()
 {
     while (itemAlive) 
     {
-        std::cout << "Time thread start" << std::endl;
+        /* std::cout << "Time thread start" << std::endl; */
         updateTime();
+        std::strftime(this->msg, sizeof(this->msg), "%a %R", dateNow);
 
-        // TODO: Make this a shared_ptr and continually update it 
-        // rather than make and destroy new variables
-        event time("black", "white", "Time", std::ctime(&timeNow));
+        event time("#ff0000", "#00ff00", locToString(getPlacement()), std::to_string(this->getId()), this->msg);
         itemPushEvent(time);
-        std::cout << "Pushed" << std::endl;
+        /* std::cout << "Pushed" << std::endl; */
 
         cv.notify_one();
-        std::cout << "Time thread notifies" << std::endl;
+        /* std::cout << "Time thread notifies" << std::endl; */
 
         std::this_thread::sleep_for(2s);
     }
