@@ -1,3 +1,4 @@
+#pragma once
 // Main file for Implementing items and the bar
 // This might split into an items.h and bar.h later,
 // I kinda want to keep this all in one header, makes 
@@ -31,9 +32,7 @@ class Bar
         void eventWatchLoop();
         void displayEvents();
 
-        // Main event organizer. This takes the current eventFifo and
-        // itemList and writes the next bar to currentBar. It ensures
-        // that the bar contains all of the items.
+        // This currently only organizes the itemList to be in order of orientation then id
         void itemOrg();
         
         // Generic message formatter. This might be moved out to the
@@ -92,6 +91,9 @@ void Bar::refreshBar()
 // This includes all new and old events
 // Places this new bar into currentBar
 // ONLY call this at initialization, use refreshBar everywhere else
+// TODO: Move all of the formatting out to the individual items
+//       Its so much cleaner if it isn't built into the bar +
+//       there are so many different cases for the formatting
 void Bar::createBar()
 {
     std::unique_ptr<std::stringstream> barStream = std::make_unique<std::stringstream>();
@@ -103,14 +105,13 @@ void Bar::createBar()
         {
             currentSide = locToString(itemList->at(i)->getPlacement());
             *barStream << "%{" << locToString(itemList->at(i)->getPlacement()) << "}%{F" << "#ff0000" << "}%{B" << "#00ff00" \
-                            << "} " << "test" << i << " %{B-}%{F-}";
+                            << "} " << itemList->at(i)->getId() << " %{B-}%{F-}";
         } else 
         {
         *barStream << "%{F" << "#ff0000" << "}%{B" << "#00ff00" \
-                        << "} " << "test" << i << " %{B-}%{F-}";
+                        << "} " <<  itemList->at(i)->getId() << " %{B-}%{F-}";
         }
     }
-    currentSide = "none";
     this->currentBar = barStream->str();
 }
 
@@ -167,7 +168,7 @@ void Bar::addItem(Item& item)
 std::string Bar::formatMessage(event barEvent)
 {
     std::string formattedMessage;
-    formattedMessage = "%{" + barEvent.placement + "}%{F" + barEvent.fgColor + "}%{B" + barEvent.bgColor \
+    formattedMessage = "%{" + barEvent.placement + "}%{F" + std::to_string(barEvent.fgColor) + "}%{B" + std::to_string(barEvent.bgColor) \
                         + "} " + barEvent.message + " %{F-}%{B-}";
     
     /* std::cout << "%{F" << barEvent.fgColor << "}%{B" << barEvent.bgColor << \ */
@@ -179,10 +180,10 @@ std::string Bar::formatMessage(event barEvent)
 
 /* void Bar::barPushEvent(event input) */
 /* { */
-/*     eventFifo.push(input); */
+/*     mainEventQueue.push(input); */
 /* } */
 
-// Continually watches the eventFifo for updates
+// Continually watches the mainEventQueue for updates
 // The thread will run this loop
 // Uses condition_variables and mutexes to keep the CPU low
 void Bar::eventWatchLoop()
@@ -191,17 +192,21 @@ void Bar::eventWatchLoop()
     {
         std::unique_lock<std::mutex> lk(m);
         /* std::cout << "Bar waiting" << std::endl; */
-        cv.wait(lk);
+        while (mainEventQueue.empty())
+        {
+            cv.wait(lk);
+        }
+
         // Send two endl's to make the spacing look nice 
         /* std::cout << "Bar locked" << std::endl << std::endl; */
-        itemOrg();
 
-        while (eventFifo.empty() == false)
+        while (mainEventQueue.empty() == false)
         {
+            event newEvent = mainEventQueue.front();
+            mainEventQueue.pop();
             /* displayEvents(); */
-            //std::cout << formatMessage(eventFifo.front()) << std::endl;
-            std::cout << this->currentBar;
-            eventFifo.pop();
+            //std::cout << formatMessage(mainEventQueue.front()) << std::endl;
+            //std::cout << this->currentBar;
         }
         std::cout << std::endl;
 
@@ -213,9 +218,9 @@ void Bar::eventWatchLoop()
 // Displays event from queue and removes it
 void Bar::displayEvents()
 {
-    std::cout << "Sender: " << eventFifo.front().senderId << std::endl \
-        << "Message: " << eventFifo.front().message << std::endl; 
+    std::cout << "Sender: " << mainEventQueue.front().senderId << std::endl \
+        << "Message: " << mainEventQueue.front().message << std::endl; 
 
     // Remove item from FIFO when done with it
-    eventFifo.pop();
-}
+    mainEventQueue.pop();
+} 
